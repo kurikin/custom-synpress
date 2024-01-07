@@ -14,14 +14,9 @@ let currentNetwork = chains.mainnet;
 let addedNetworks = [chains.mainnet, chains.goerli, chains.sepolia];
 
 module.exports = {
-  async resetState() {
-    log('Resetting state of helpers');
-    currentNetwork = chains.mainnet;
-    addedNetworks = [chains.mainnet, chains.goerli, chains.sepolia];
-  },
   // set currently active network
   async setNetwork(network) {
-    log('Setting network to', network);
+    log(`Setting network to ${JSON.stringify(network)}`);
     currentNetwork = network;
   },
   // find network in presets
@@ -31,7 +26,11 @@ module.exports = {
     }
 
     network = network.toLowerCase();
-    log('[findNetwork] Trying to find following network', network);
+    log(
+      `[findNetwork] Trying to find following network: ${JSON.stringify(
+        network,
+      )}`,
+    );
 
     let chain;
     for (const [key, value] of Object.entries(chains)) {
@@ -74,7 +73,11 @@ module.exports = {
   },
   // get currently active network
   getCurrentNetwork() {
-    log('[getCurrentNetwork] Current network data', currentNetwork);
+    log(
+      `[getCurrentNetwork] Current network data: ${JSON.stringify(
+        currentNetwork,
+      )}`,
+    );
     return currentNetwork;
   },
   // add new network to presets and list of metamask networks
@@ -89,7 +92,11 @@ module.exports = {
   },
   // check if network is already added to metamask
   async checkNetworkAdded(network) {
-    log('[checkNetworkAdded] Checking if network is already added', network);
+    log(
+      `[checkNetworkAdded] Checking if network is already added: ${JSON.stringify(
+        network,
+      )}`,
+    );
     if (addedNetworks.includes(network)) {
       log(`[checkNetworkAdded] Network is present`);
       return true;
@@ -226,8 +233,9 @@ module.exports = {
 
     await module.exports.createDirIfNotExist(downloadsDirectory);
     const metamaskDirectory = path.join(downloadsDirectory, release.tagName);
-    const metamaskDirectoryExists =
-      await module.exports.checkDirOrFileExist(metamaskDirectory);
+    const metamaskDirectoryExists = await module.exports.checkDirOrFileExist(
+      metamaskDirectory,
+    );
     const metamaskManifestFilePath = path.join(
       downloadsDirectory,
       release.tagName,

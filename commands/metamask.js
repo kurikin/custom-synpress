@@ -1,6 +1,5 @@
 const log = require('debug')('synpress:metamask');
 const playwright = require('./playwright');
-const sleep = require('util').promisify(setTimeout);
 
 const {
   onboardingWelcomePageElements,
@@ -55,21 +54,6 @@ let walletAddress;
 let switchBackToCypressWindow;
 
 const metamask = {
-  async resetState() {
-    log('Resetting state of metamask');
-    extensionId = undefined;
-    extensionVersion = undefined;
-    extensionHomeUrl = undefined;
-    extensionSettingsUrl = undefined;
-    extensionAdvancedSettingsUrl = undefined;
-    extensionExperimentalSettingsUrl = undefined;
-    extensionAddNetworkUrl = undefined;
-    extensionNewAccountUrl = undefined;
-    extensionImportAccountUrl = undefined;
-    extensionImportTokenUrl = undefined;
-    walletAddress = undefined;
-    switchBackToCypressWindow = undefined;
-  },
   extensionId: () => {
     return extensionId;
   },
@@ -182,18 +166,6 @@ const metamask = {
         mainPageElements.actionableMessage.closeButton,
       );
     }
-
-    // Closes "You have switched to [network]" popup.
-    // It appears if you connect to a new network for the first time.
-    if (
-      (await playwright
-        .metamaskWindow()
-        .locator(recipientPopupElements.popupCloseButton)
-        .count()) > 0
-    ) {
-      await playwright.waitAndClick(recipientPopupElements.popupCloseButton);
-    }
-
     return true;
   },
   async closeModal() {
@@ -237,6 +209,7 @@ const metamask = {
     return true;
   },
   async importWallet(secretWords, password) {
+    await playwright.waitAndClick(onboardingWelcomePageElements.onboardingTermsCheckbox)
     await playwright.waitAndClick(
       onboardingWelcomePageElements.importWalletButton,
       await playwright.metamaskWindow(),
@@ -381,9 +354,7 @@ const metamask = {
       mainPageElements.createAccount.createAccountError,
     );
     const formErrorTxt = await formErrorEl.innerText();
-    const accountExists =
-      'This account name already exists' === formErrorTxt ||
-      'This account name is reserved' === formErrorTxt;
+    const accountExists = 'This account name already exists' === formErrorTxt;
 
     if (accountExists) {
       log(`[createAccount] ${formErrorTxt}`);
@@ -397,40 +368,6 @@ const metamask = {
     }
 
     await module.exports.closePopupAndTooltips();
-    await switchToCypressIfNotActive();
-    return accountExists ? formErrorTxt : true;
-  },
-  async renameAccount(newAccountName) {
-    await switchToMetamaskIfNotActive();
-
-    await playwright.waitAndClick(mainPageElements.optionsMenu.button);
-    await playwright.waitAndClick(
-      mainPageElements.optionsMenu.accountDetailsButton,
-    );
-
-    await playwright.waitAndClick(mainPageElements.renameAccount.invokeInput);
-    await playwright.waitClearAndType(
-      newAccountName,
-      mainPageElements.renameAccount.input,
-    );
-
-    const formErrorEl = await playwright.waitFor(
-      mainPageElements.renameAccount.error,
-    );
-    const formErrorTxt = await formErrorEl.innerText();
-    const accountExists =
-      'This account name already exists' === formErrorTxt ||
-      'This account name is reserved' === formErrorTxt;
-
-    if (accountExists) {
-      log(`[createAccount] ${formErrorTxt}`);
-    } else {
-      await playwright.waitAndClick(
-        mainPageElements.renameAccount.confirmButton,
-      );
-    }
-
-    await playwright.waitAndClick(mainPageElements.accountModal.closeButton);
     await switchToCypressIfNotActive();
     return accountExists ? formErrorTxt : true;
   },
@@ -933,20 +870,6 @@ const metamask = {
       return true;
     }
 
-    if (options && options.switchNetwork) {
-      await playwright.waitAndClick(
-        permissionsPageElements.connectButton,
-        notificationPage,
-        { waitForEvent: 'navi' },
-      );
-      await playwright.waitAndClick(
-        confirmationPageElements.footer.approveButton,
-        notificationPage,
-        { waitForEvent: 'close' },
-      );
-      return true;
-    }
-
     await playwright.waitAndClick(
       permissionsPageElements.connectButton,
       notificationPage,
@@ -1103,34 +1026,18 @@ const metamask = {
         .count()) > 0
     ) {
       log('[confirmTransaction] Getting recipient address..');
-
-      const tooltip = await playwright.waitAndGetAttributeValue(
-        confirmPageElements.recipientAddressTooltipContainerButton,
-        'aria-describedby',
+      await playwright.waitAndClick(
+        confirmPageElements.recipientButton,
         notificationPage,
-        true,
       );
-
-      // Handles the case where the recipient address is saved and has a "nickname".
-      if (tooltip === 'tippy-tooltip-2') {
-        txData.recipientPublicAddress = await playwright.waitAndGetValue(
-          confirmPageElements.recipientButton,
-          notificationPage,
-        );
-      } else {
-        await playwright.waitAndClick(
-          confirmPageElements.recipientButton,
-          notificationPage,
-        );
-        txData.recipientPublicAddress = await playwright.waitAndGetValue(
-          recipientPopupElements.recipientPublicAddress,
-          notificationPage,
-        );
-        await playwright.waitAndClick(
-          recipientPopupElements.popupCloseButton,
-          notificationPage,
-        );
-      }
+      txData.recipientPublicAddress = await playwright.waitAndGetValue(
+        recipientPopupElements.recipientPublicAddress,
+        notificationPage,
+      );
+      await playwright.waitAndClick(
+        recipientPopupElements.popupCloseButton,
+        notificationPage,
+      );
     }
     log('[confirmTransaction] Checking if network name is present..');
     if (
@@ -1195,70 +1102,6 @@ const metamask = {
     log('[confirmTransaction] Transaction confirmed!');
     return txData;
   },
-  async confirmTransactionAndWaitForMining(gasConfig) {
-    // Before we switch to MetaMask tab we have to make sure the notification window has opened.
-    //
-    // Chaining `confirmTransactionAndWaitForMining` results in quick tabs switching
-    // which breaks MetaMask and the notification window does not open
-    // until we switch back to the "Cypress" tab.
-    await playwright.switchToMetamaskNotification();
-
-    await switchToMetamaskIfNotActive();
-    await playwright
-      .metamaskWindow()
-      .locator(mainPageElements.tabs.activityButton)
-      .click();
-
-    let retries = 0;
-    const retiresLimit = 600;
-
-    // 120 seconds
-    while (retries < retiresLimit) {
-      const unapprovedTxs = await playwright
-        .metamaskWindow()
-        .getByText('Unapproved')
-        .count();
-      if (unapprovedTxs === 1) {
-        break;
-      }
-      await sleep(200);
-      retries++;
-    }
-
-    if (retries === retiresLimit) {
-      throw new Error(
-        'New unapproved transaction was not detected in 120 seconds.',
-      );
-    }
-
-    const txData = await module.exports.confirmTransaction(gasConfig);
-
-    // 120 seconds
-    while (retries < retiresLimit) {
-      const pendingTxs = await playwright
-        .metamaskWindow()
-        .getByText('Pending')
-        .count();
-      const queuedTxs = await playwright
-        .metamaskWindow()
-        .getByText('Queued')
-        .count();
-      if (pendingTxs === 0 && queuedTxs === 0) {
-        break;
-      }
-      await sleep(200);
-      retries++;
-    }
-
-    if (retries === retiresLimit) {
-      throw new Error('Transaction was not mined in 120 seconds.');
-    }
-
-    await switchToCypressIfNotActive();
-
-    log('[confirmTransactionAndWaitForMining] Transaction confirmed!');
-    return txData;
-  },
   async rejectTransaction() {
     const notificationPage = await playwright.switchToMetamaskNotification();
     await playwright.waitAndClick(
@@ -1266,64 +1109,6 @@ const metamask = {
       notificationPage,
       { waitForEvent: 'close' },
     );
-    return true;
-  },
-  async openTransactionDetails(txIndex) {
-    await switchToMetamaskIfNotActive();
-    await playwright
-      .metamaskWindow()
-      .locator(mainPageElements.tabs.activityButton)
-      .click();
-
-    let visibleTxs = await playwright
-      .metamaskWindow()
-      .locator(
-        `${mainPageElements.activityTab.completedTransactionsList} > div`,
-      )
-      .filter({
-        has: playwright.metamaskWindow().locator('div.list-item__heading'),
-      })
-      .all();
-
-    while (txIndex >= visibleTxs.length) {
-      try {
-        await playwright
-          .metamaskWindow()
-          .locator(
-            `${mainPageElements.activityTab.completedTransactionsList} > button`,
-          )
-          .click();
-      } catch (error) {
-        log('[openTransactionDetails] Clicking "View more" failed!');
-        throw new Error(
-          `Transaction with index ${txIndex} is not found. There are only ${visibleTxs.length} transactions.`,
-        );
-      }
-
-      visibleTxs = await playwright
-        .metamaskWindow()
-        .locator(
-          `${mainPageElements.activityTab.completedTransactionsList} > div`,
-        )
-        .filter({
-          has: playwright.metamaskWindow().locator('div.list-item__heading'),
-        })
-        .all();
-    }
-
-    await visibleTxs[txIndex].click();
-
-    await playwright
-      .metamaskWindow()
-      .locator(mainPageElements.popup.container)
-      .waitFor({ state: 'visible', timeout: 10000 });
-
-    return true;
-  },
-  async closeTransactionDetailsPopup() {
-    await switchToMetamaskIfNotActive();
-    await module.exports.closePopupAndTooltips();
-    await switchToCypressIfNotActive();
     return true;
   },
   async confirmEncryptionPublicKeyRequest() {
@@ -1362,7 +1147,7 @@ const metamask = {
     );
     return true;
   },
-  async confirmPermissionToApproveAll() {
+  async confirmPermisionToApproveAll() {
     const notificationPage = await playwright.switchToMetamaskNotification();
     await playwright.waitAndClick(
       notificationPageElements.allowToSpendButton,
@@ -1375,7 +1160,7 @@ const metamask = {
     );
     return true;
   },
-  async rejectPermissionToApproveAll() {
+  async rejectPermisionToApproveAll() {
     const notificationPage = await playwright.switchToMetamaskNotification();
     await playwright.waitAndClick(
       notificationPageElements.allowToSpendButton,
@@ -1383,24 +1168,6 @@ const metamask = {
     );
     await playwright.waitAndClick(
       notificationPageElements.rejectWarningToSpendButton,
-      notificationPage,
-      { waitForEvent: 'close' },
-    );
-    return true;
-  },
-  async confirmRevokePermissionToAll() {
-    const notificationPage = await playwright.switchToMetamaskNotification();
-    await playwright.waitAndClick(
-      notificationPageElements.allowToSpendButton,
-      notificationPage,
-      { waitForEvent: 'close' },
-    );
-    return true;
-  },
-  async rejectRevokePermissionToAll() {
-    const notificationPage = await playwright.switchToMetamaskNotification();
-    await playwright.waitAndClick(
-      notificationPageElements.rejectToSpendButton,
       notificationPage,
       { waitForEvent: 'close' },
     );
@@ -1438,10 +1205,6 @@ const metamask = {
       notificationPage,
       { waitForEvent: 'close' },
     );
-
-    // TODO: Add test for the new network popup. Requires changes to the MetaMask Test Dapp.
-    await module.exports.closePopupAndTooltips();
-
     return true;
   },
   async rejectToSwitchNetwork() {
@@ -1506,11 +1269,10 @@ const metamask = {
         await module.exports.importAccount(secretWordsOrPrivateKey);
       }
 
-      await setupSettings(enableAdvancedSettings, enableExperimentalSettings);
+      // await setupSettings(enableAdvancedSettings, enableExperimentalSettings);
+      // await module.exports.changeNetwork(network);
 
-      await module.exports.changeNetwork(network);
-
-      walletAddress = await module.exports.getWalletAddress();
+      // walletAddress = await module.exports.getWalletAddress();
       await playwright.switchToCypressWindow();
       return true;
     } else if (

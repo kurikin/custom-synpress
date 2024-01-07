@@ -10,8 +10,6 @@ const {
 const sleep = require('util').promisify(setTimeout);
 const _ = require('underscore');
 
-let expectInstance;
-
 let browser;
 let mainWindow;
 let metamaskWindow;
@@ -24,21 +22,6 @@ let retries = 0;
 let extensionsData = {};
 
 module.exports = {
-  async resetState() {
-    log('Resetting state of playwright');
-    expectInstance = undefined;
-    browser = undefined;
-    mainWindow = undefined;
-    metamaskWindow = undefined;
-    metamaskNotificationWindow = undefined;
-    metamaskPopupWindow = undefined;
-    activeTabName = undefined;
-    retries = 0;
-    extensionsData = {};
-  },
-  getExpectInstance() {
-    return expectInstance;
-  },
   browser() {
     return browser;
   },
@@ -56,14 +39,6 @@ module.exports = {
   },
   activeTabName() {
     return activeTabName;
-  },
-  async metamaskExtensionId() {
-    const metamaskExtensionData = (await module.exports.getExtensionsData())
-      .metamask;
-    return metamaskExtensionData.id;
-  },
-  async setExpectInstance(expect) {
-    expectInstance = expect;
   },
   async init(playwrightInstance) {
     const chromium = playwrightInstance
@@ -92,7 +67,8 @@ module.exports = {
     return true;
   },
   async assignWindows() {
-    const metamaskExtensionId = await module.exports.metamaskExtensionId();
+    const metamaskExtensionData = (await module.exports.getExtensionsData())
+      .metamask;
 
     let pages = await browser.contexts()[0].pages();
     for (const page of pages) {
@@ -101,21 +77,21 @@ module.exports = {
       } else if (
         page
           .url()
-          .includes(`chrome-extension://${metamaskExtensionId}/home.html`)
+          .includes(`chrome-extension://${metamaskExtensionData.id}/home.html`)
       ) {
         metamaskWindow = page;
       } else if (
         page
           .url()
           .includes(
-            `chrome-extension://${metamaskExtensionId}/notification.html`,
+            `chrome-extension://${metamaskExtensionData.id}/notification.html`,
           )
       ) {
         metamaskNotificationWindow = page;
       } else if (
         page
           .url()
-          .includes(`chrome-extension://${metamaskExtensionId}/popup.html`)
+          .includes(`chrome-extension://${metamaskExtensionData.id}/popup.html`)
       ) {
         metamaskPopupWindow = page;
       }
@@ -165,7 +141,8 @@ module.exports = {
     return true;
   },
   async switchToMetamaskNotification() {
-    const metamaskExtensionId = await module.exports.metamaskExtensionId();
+    const metamaskExtensionData = (await module.exports.getExtensionsData())
+      .metamask;
 
     let pages = await browser.contexts()[0].pages();
     for (const page of pages) {
@@ -173,7 +150,7 @@ module.exports = {
         page
           .url()
           .includes(
-            `chrome-extension://${metamaskExtensionId}/notification.html`,
+            `chrome-extension://${metamaskExtensionData.id}/notification.html`,
           )
       ) {
         metamaskNotificationWindow = page;
@@ -258,8 +235,8 @@ module.exports = {
     await module.exports.waitUntilStable(page);
   },
   async waitAndGetValue(selector, page = metamaskWindow) {
-    const expect = expectInstance
-      ? expectInstance
+    const expect = global.expect
+      ? global.expect
       : require('@playwright/test').expect;
     const element = await module.exports.waitFor(selector, page);
     await expect(element).toHaveText(/[a-zA-Z0-9]/, {
@@ -270,27 +247,20 @@ module.exports = {
     return value;
   },
   async waitAndGetInputValue(selector, page = metamaskWindow) {
-    const expect = expectInstance
-      ? expectInstance
+    const expect = global.expect
+      ? global.expect
       : require('@playwright/test').expect;
     const element = await module.exports.waitFor(selector, page);
     await expect(element).toHaveValue(/[a-zA-Z1-9]/);
     const value = await element.inputValue();
     return value;
   },
-  async waitAndGetAttributeValue(
-    selector,
-    attribute,
-    page = metamaskWindow,
-    skipValidation = false,
-  ) {
-    const expect = expectInstance
-      ? expectInstance
+  async waitAndGetAttributeValue(selector, attribute, page = metamaskWindow) {
+    const expect = global.expect
+      ? global.expect
       : require('@playwright/test').expect;
     const element = await module.exports.waitFor(selector, page);
-    if (!skipValidation) {
-      await expect(element).toHaveAttribute(attribute, /[a-zA-Z0-9]/);
-    }
+    await expect(element).toHaveAttribute(attribute, /[a-zA-Z0-9]/);
     const attrValue = await element.getAttribute(attribute);
     return attrValue;
   },
@@ -340,13 +310,16 @@ module.exports = {
     }
   },
   async waitUntilStable(page) {
-    const metamaskExtensionId = await module.exports.metamaskExtensionId();
+    const metamaskExtensionData = (await module.exports.getExtensionsData())
+      .metamask;
 
     if (
       page &&
       page
         .url()
-        .includes(`chrome-extension://${metamaskExtensionId}/notification.html`)
+        .includes(
+          `chrome-extension://${metamaskExtensionData.id}/notification.html`,
+        )
     ) {
       await page.waitForLoadState('load');
       await page.waitForLoadState('domcontentloaded');
@@ -477,7 +450,7 @@ module.exports = {
 
       const extensionId = (
         await extensionData.locator('#extension-id').textContent()
-      ).split(': ')[1];
+      ).replace('ID: ', '');
 
       extensionsData[extensionName] = {
         version: extensionVersion,
